@@ -2,11 +2,10 @@ import requests
 import gzip
 import xml.etree.ElementTree as ET
 from io import BytesIO
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from flask import Flask, send_file
 import threading
 import time
 from datetime import datetime
-import os
 
 # -----------------------------
 # CONFIG: Feeds to merge
@@ -22,10 +21,7 @@ EPG_FEEDS = [
 LOCAL_FILE = "merged_epg.xml.gz"
 UPDATE_INTERVAL_HOURS = 24  # daily
 
-# -----------------------------
-# Serve files from the script's folder
-# -----------------------------
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+app = Flask(__name__)
 
 # -----------------------------
 # Function: Merge all feeds
@@ -37,7 +33,7 @@ def update_epg():
         for url in EPG_FEEDS:
             try:
                 print(f"[{datetime.now()}] Downloading {url} ...")
-                response = requests.get(url)
+                response = requests.get(url, timeout=30)
                 response.raise_for_status()
                 with gzip.open(BytesIO(response.content), "rb") as f:
                     tree = ET.parse(f)
@@ -64,18 +60,23 @@ def update_epg():
         time.sleep(UPDATE_INTERVAL_HOURS * 3600)
 
 # -----------------------------
-# Function: Start HTTP server
+# Flask routes
 # -----------------------------
-def start_server():
-    port = int(os.environ.get("PORT", 8000))  # Render assigns port dynamically
-    handler = SimpleHTTPRequestHandler
-    httpd = HTTPServer(("0.0.0.0", port), handler)
-    print(f"Serving merged EPG at http://0.0.0.0:{port}/{LOCAL_FILE}")
-    httpd.serve_forever()
+@app.route("/")
+def index():
+    return f"<h2>EPG Server</h2><p>Download merged EPG: <a href='/merged_epg.xml.gz'>merged_epg.xml.gz</a></p>"
+
+@app.route("/merged_epg.xml.gz")
+def serve_epg():
+    try:
+        return send_file(LOCAL_FILE, mimetype="application/gzip", as_attachment=True)
+    except Exception as e:
+        return f"EPG file not available yet: {e}", 404
 
 # -----------------------------
-# Run everything
+# Start everything
 # -----------------------------
 if __name__ == "__main__":
     threading.Thread(target=update_epg, daemon=True).start()
-    start_server()
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port)
