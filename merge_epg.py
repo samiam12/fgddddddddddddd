@@ -1,3 +1,4 @@
+import os
 import requests
 import gzip
 import xml.etree.ElementTree as ET
@@ -80,3 +81,4 @@ if __name__ == "__main__":
     threading.Thread(target=update_epg, daemon=True).start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
+
