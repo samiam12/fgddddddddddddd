@@ -1,15 +1,15 @@
 import os
-import requests
+import time
 import gzip
+import requests
 import xml.etree.ElementTree as ET
 from io import BytesIO
-from flask import Flask, send_file
-import threading
-import time
 from datetime import datetime
+from threading import Thread
+from flask import Flask, send_file
 
 # -----------------------------
-# CONFIG: Feeds to merge
+# CONFIG
 # -----------------------------
 EPG_FEEDS = [
     "https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz",
@@ -20,14 +20,27 @@ EPG_FEEDS = [
 ]
 
 LOCAL_FILE = "merged_epg.xml.gz"
-UPDATE_INTERVAL_HOURS = 24  # daily
+UPDATE_INTERVAL_HOURS = 24  # update daily
 
+# -----------------------------
+# Flask app
+# -----------------------------
 app = Flask(__name__)
 
+@app.route("/")
+def home():
+    return "EPG Merge Service is running!"
+
+@app.route(f"/{LOCAL_FILE}")
+def serve_epg():
+    if os.path.exists(LOCAL_FILE):
+        return send_file(LOCAL_FILE, mimetype="application/gzip")
+    return "EPG not available yet. Try again in a few seconds.", 503
+
 # -----------------------------
-# Function: Merge all feeds
+# Merge feeds
 # -----------------------------
-def update_epg():
+def merge_feeds():
     while True:
         print(f"[{datetime.now()}] Starting EPG update...")
         feeds = []
@@ -39,46 +52,37 @@ def update_epg():
                 with gzip.open(BytesIO(response.content), "rb") as f:
                     tree = ET.parse(f)
                     feeds.append(tree)
-                print(f"[{datetime.now()}] Success")
+                print(f"[{datetime.now()}] Successfully downloaded {url}")
             except Exception as e:
-                print(f"[{datetime.now()}] Failed to download {url}: {e}")
+                print(f"[{datetime.now()}] Failed {url}: {e}")
 
-        merged_root = ET.Element("tv")
-        for tree in feeds:
-            root = tree.getroot()
-            for elem in root:
-                merged_root.append(elem)
+        if feeds:
+            merged_root = ET.Element("tv")
+            for tree in feeds:
+                root = tree.getroot()
+                for elem in root:
+                    merged_root.append(elem)
+            merged_tree = ET.ElementTree(merged_root)
+            merged_bytes = BytesIO()
+            merged_tree.write(merged_bytes, encoding="utf-8", xml_declaration=True)
 
-        merged_tree = ET.ElementTree(merged_root)
-        merged_bytes = BytesIO()
-        merged_tree.write(merged_bytes, encoding="utf-8", xml_declaration=True)
+            with gzip.open(LOCAL_FILE, "wb") as f:
+                f.write(merged_bytes.getvalue())
 
-        with gzip.open(LOCAL_FILE, "wb") as f:
-            f.write(merged_bytes.getvalue())
+            print(f"[{datetime.now()}] Merged EPG saved as {LOCAL_FILE}")
+        else:
+            print(f"[{datetime.now()}] No feeds downloaded, skipping merge.")
 
-        print(f"[{datetime.now()}] Merged EPG saved as {LOCAL_FILE}")
-        print(f"[{datetime.now()}] Next update in {UPDATE_INTERVAL_HOURS} hours...\n")
+        print(f"[{datetime.now()}] Next update in {UPDATE_INTERVAL_HOURS} hours\n")
         time.sleep(UPDATE_INTERVAL_HOURS * 3600)
 
 # -----------------------------
-# Flask routes
-# -----------------------------
-@app.route("/")
-def index():
-    return f"<h2>EPG Server</h2><p>Download merged EPG: <a href='/merged_epg.xml.gz'>merged_epg.xml.gz</a></p>"
-
-@app.route("/merged_epg.xml.gz")
-def serve_epg():
-    try:
-        return send_file(LOCAL_FILE, mimetype="application/gzip", as_attachment=True)
-    except Exception as e:
-        return f"EPG file not available yet: {e}", 404
-
-# -----------------------------
-# Start everything
+# Run everything
 # -----------------------------
 if __name__ == "__main__":
-    threading.Thread(target=update_epg, daemon=True).start()
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+    # Start background updater
+    Thread(target=merge_feeds, daemon=True).start()
 
+    # Start Flask server on the port Render assigns
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
